@@ -9,8 +9,7 @@
     "start": "node index.js",
     "devServer": "nodemon index.js",
     "dev": "concurrently \"npm run devVite\" \"npm run devServer\"",
-    "webpack": "webpack",
-    "build": "npm run buildVite"
+    "webpack": "webpack"
   },
   "dependencies": {
     "@aws-sdk/client-ec2": "^3.504.0",
