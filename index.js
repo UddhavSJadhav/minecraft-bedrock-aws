@@ -1,4 +1,5 @@
 /* eslint-disable no-undef */
+import fs from "fs";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -35,13 +36,17 @@ const port = process.env.PORT || 3000;
 app.use("/", express.static(process.cwd() + "/public"));
 app.use(cors());
 
-const privateKey = process.env.AWS_PRIVATE_KEY;
+// private key can be stored in a file and read using fs.readFileSync
+// file: example.pem
+const privateKey = fs.readFileSync("lcz.pem");
+// or it can be stored in an environment variable
+// const privateKey = process.env.AWS_PRIVATE_KEY;
+
 const instanceIP = process.env.AWS_INSTANCE_IP;
 
 const startMinecraftServerScript = "start-minecraft-server";
+const checkMinecraftServerScript = "check-minecraft-server";
 const stopMinecraftServerScript = "stop-minecraft-server";
-
-const conn = new Client();
 
 // Check if the instance is running
 const checkInstanceStatus = async (req, res) => {
@@ -53,7 +58,57 @@ const checkInstanceStatus = async (req, res) => {
       status?.InstanceStatuses?.length > 0 &&
       status?.InstanceStatuses[0]?.InstanceState?.Name === "running"
     ) {
-      return res.status(200).send("Server running");
+      const minecraftServerStatus = new Promise((resolve, reject) => {
+        const conn = new Client();
+        conn
+          .on("error", (err) => {
+            console.error(`Connection error: ${err.message}`);
+            reject(err);
+          })
+          .on("ready", () => {
+            console.log("SSH connection successful");
+
+            conn.shell((err, stream) => {
+              if (err) throw err;
+
+              stream
+                .on("data", function (data) {
+                  console.log("STDOUT: " + data);
+                  if (data?.includes("(Attached)")) {
+                    conn.end();
+                    return resolve(true);
+                  }
+                  if (
+                    data?.includes(
+                      "There is no screen to be resumed matching minecraft."
+                    )
+                  ) {
+                    conn.end();
+                    resolve(false);
+                  }
+                })
+                .on("close", function () {
+                  console.log("Connection closed");
+                  conn.end();
+                  resolve(false);
+                });
+
+              stream.write(checkMinecraftServerScript + "\n");
+              stream.write("exit\n");
+            });
+          })
+          .connect({
+            host: instanceIP,
+            port: 22,
+            username: "ubuntu",
+            privateKey: privateKey,
+          });
+      });
+
+      return res.status(200).json({
+        instanceStatus: true,
+        minecraftServerStatus: await minecraftServerStatus,
+      });
     }
     res.status(400).send("Server not running");
   } catch (error) {
@@ -120,6 +175,7 @@ const startInstance = async (req, res) => {
 const startMinecraftServer = async (req, res) => {
   try {
     await new Promise((resolve, reject) => {
+      const conn = new Client();
       conn
         .on("error", (err) => {
           console.error(`Connection error: ${err.message}`);
@@ -167,6 +223,55 @@ const startMinecraftServer = async (req, res) => {
 // Stop Minecraft Server
 const stopMinecraftServer = async (req, res) => {
   try {
+    await new Promise((resolve, reject) => {
+      const conn = new Client();
+      conn
+        .on("error", (err) => {
+          console.error(`Connection error: ${err.message}`);
+          reject(err);
+        })
+        .on("ready", () => {
+          console.log("SSH connection successful");
+
+          conn.shell((err, stream) => {
+            if (err) throw err;
+
+            stream
+              .on("data", function (data) {
+                console.log("STDOUT: " + data);
+                if (data?.includes("Server stopped")) {
+                  conn.end();
+                  resolve();
+                }
+              })
+              .on("close", function () {
+                console.log("Connection closed");
+                conn.end();
+                resolve();
+              });
+
+            stream.write(stopMinecraftServerScript + "\n");
+            stream.write("exit\n");
+          });
+        })
+        .connect({
+          host: instanceIP,
+          port: 22,
+          username: "ubuntu",
+          privateKey: privateKey,
+        });
+    });
+
+    res.status(200).send("Server stopped");
+  } catch (error) {
+    console.error(`Error in stopMinecraftServer: ${error.message}`);
+    res.status(500).send("Failed to stop server");
+  }
+};
+
+// Stop Minecraft Server and Instance
+const stopInstance = async (req, res) => {
+  try {
     // check if the instance is running
     const status = await ec2Client.send(describeInstanceStatusCmd);
     console.log("Initial check", status);
@@ -181,6 +286,7 @@ const stopMinecraftServer = async (req, res) => {
 
     // connect to the instance and stop the server
     await new Promise((resolve, reject) => {
+      const conn = new Client();
       conn
         .on("error", (err) => {
           console.error(`Connection error: ${err.message}`);
@@ -244,8 +350,11 @@ app.get("/api/check", checkInstanceStatus);
 // Express route to start Bedrock server
 app.post("/api/start-server", startMinecraftServer);
 
+// Express route to stop Bedrock server
+app.post("/api/stop-server", stopMinecraftServer);
+
 // Express route to stop EC2 instance
-app.post("/api/stop", stopMinecraftServer);
+app.post("/api/stop", stopInstance);
 
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}`);
