@@ -38,15 +38,18 @@ app.use(cors());
 
 // private key can be stored in a file and read using fs.readFileSync
 // file: example.pem
-const privateKey = fs.readFileSync("lcz.pem");
+const privateKey = fs.readFileSync("example.pem");
 // or it can be stored in an environment variable
 // const privateKey = process.env.AWS_PRIVATE_KEY;
 
 const instanceIP = process.env.AWS_INSTANCE_IP;
 
 const startMinecraftServerScript = "start-minecraft-server";
-const checkMinecraftServerScript = "check-minecraft-server";
+const checkMinecraftServerScript =
+  "get_minecraft_screen_output\ncheck_minecraft_output\nprint_check_minecraft_result";
 const stopMinecraftServerScript = "stop-minecraft-server";
+const backupMinecraftServerScript = "backup-minecraft-server";
+const loadBackupMinecraftServerScript = "load-backup-minecraft-server";
 
 // Check if the instance is running
 const checkInstanceStatus = async (req, res) => {
@@ -74,7 +77,11 @@ const checkInstanceStatus = async (req, res) => {
               stream
                 .on("data", function (data) {
                   console.log("STDOUT: " + data);
-                  if (data?.includes("(Attached)")) {
+                  if (data?.includes("No screen session found.")) {
+                    conn.end();
+                    return resolve(false);
+                  }
+                  if (data?.includes("Text found in screen session.")) {
                     conn.end();
                     return resolve(true);
                   }
@@ -201,6 +208,7 @@ const startMinecraftServer = async (req, res) => {
                 resolve();
               });
 
+            stream.write(backupMinecraftServerScript + "\n");
             stream.write(startMinecraftServerScript + "\n");
             stream.write("exit\n");
           });
@@ -235,22 +243,23 @@ const stopMinecraftServer = async (req, res) => {
 
           conn.shell((err, stream) => {
             if (err) throw err;
-
+            let stopped = false;
             stream
               .on("data", function (data) {
                 console.log("STDOUT: " + data);
                 if (data?.includes("Server stopped")) {
-                  conn.end();
-                  resolve();
+                  stopped = true;
                 }
               })
               .on("close", function () {
                 console.log("Connection closed");
                 conn.end();
+                if (stopped) resolve();
                 resolve();
               });
 
             stream.write(stopMinecraftServerScript + "\n");
+            stream.write(backupMinecraftServerScript + "\n");
             stream.write("exit\n");
           });
         })

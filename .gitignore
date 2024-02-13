@@ -8,11 +8,12 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-public/assets/*
+public/index.html
+public/*
 dist
 dist-ssr
 *.local
-*.pem
+lcz.pem
 
 # Editor directories and files
 .vscode/*
